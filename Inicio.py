@@ -67,7 +67,7 @@ def normalizar(df):
 # ============================================================
 #  Encabezado y mapa
 # ============================================================
-st.title("📊 Análisis de datos de Sensores en Mi Ciudad")
+st.title("📊x")
 st.markdown("""
     Esta aplicación permite analizar datos de sensores
     recolectados en diferentes puntos de la ciudad.
