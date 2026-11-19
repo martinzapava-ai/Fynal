@@ -50,46 +50,42 @@ CANDIDATAS_TIEMPO = ["time", "_time", "timestamp", "fecha", "date", "datetime"]
 # ============================================================
 #  Preparación de datos
 # ============================================================
-def preparar_datos(df):
-    """Detecta la columna de tiempo y las columnas numéricas del CSV.
-
-    Devuelve el DataFrame procesado, la lista de variables numéricas
-    y el nombre original de la columna de tiempo (o None).
-    """
-    df = df.copy()
+def preparar_datos(df: pd.DataFrame):
+    """Detecta la columna de tiempo y las columnas numéricas del CSV."""
+    df_proc = df.copy()
 
     # 1. Columna de tiempo -> índice
     col_tiempo = next(
-        (c for c in df.columns if str(c).strip().lower() in CANDIDATAS_TIEMPO),
+        (c for c in df_proc.columns if str(c).strip().lower() in CANDIDATAS_TIEMPO),
         None
     )
     if col_tiempo is not None:
-        df[col_tiempo] = pd.to_datetime(df[col_tiempo], errors="coerce")
-        df = df.dropna(subset=[col_tiempo]).set_index(col_tiempo).sort_index()
-        df.index.name = "Time"
+        df_proc[col_tiempo] = pd.to_datetime(df_proc[col_tiempo], errors="coerce")
+        df_proc = df_proc.dropna(subset=[col_tiempo]).set_index(col_tiempo).sort_index()
+        df_proc.index.name = "Time"
 
     # 2. Columnas de texto que en realidad son números (p. ej. "23,5")
-    for c in df.columns:
-        if not pd.api.types.is_numeric_dtype(df[c]):
+    for c in df_proc.columns:
+        if not pd.api.types.is_numeric_dtype(df_proc[c]):
             convertida = pd.to_numeric(
-                df[c].astype(str).str.replace(",", ".", regex=False),
+                df_proc[c].astype(str).str.replace(",", ".", regex=False),
                 errors="coerce"
             )
             if convertida.notna().mean() >= 0.9:
-                df[c] = convertida
+                df_proc[c] = convertida
 
     # 3. Variables numéricas disponibles para el análisis
-    numericas = df.select_dtypes(include="number").columns.tolist()
-    return df, numericas, col_tiempo
+    numericas = df_proc.select_dtypes(include="number").columns.tolist()
+    return df_proc, numericas, col_tiempo
 
 
-def normalizar(df):
+def normalizar(df: pd.DataFrame) -> pd.DataFrame:
     """Escala cada columna a 0-1 para comparar variables con unidades distintas."""
     rango = (df.max() - df.min()).replace(0, 1)
     return (df - df.min()) / rango
 
 
-def construir_column_config(df_datos, variables):
+def construir_column_config(df_datos: pd.DataFrame, variables: list[str]) -> dict:
     """Configura barras de progreso y formato dinámico para las columnas de la tabla."""
     config = {}
     for col in variables:
@@ -118,38 +114,8 @@ def construir_column_config(df_datos, variables):
     return config
 
 
-def estilizar_tabla(df_datos, variables, resaltar_extremos=True):
-    """Aplica color de fondo sutil y resalta máximos/mínimos en las columnas numéricas."""
-    cols_validas = [c for c in variables if c in df_datos.columns]
-    if not cols_validas:
-        return df_datos
-
-    styler = df_datos.style.background_gradient(
-        cmap="YlGnBu",
-        subset=cols_validas,
-        axis=0
-    ).format(precision=2, subset=cols_validas)
-
-    if resaltar_extremos and len(df_datos) > 1:
-        def _resaltar(s):
-            estilos = [""] * len(s)
-            if s.notna().sum() > 1:
-                idx_max = s.idxmax()
-                idx_min = s.idxmin()
-                for i, idx in enumerate(s.index):
-                    if idx == idx_max:
-                        estilos[i] = "background-color: #fee2e2; color: #991b1b; font-weight: 700;"
-                    elif idx == idx_min:
-                        estilos[i] = "background-color: #dcfce7; color: #166534; font-weight: 700;"
-            return estilos
-
-        styler = styler.apply(_resaltar, subset=cols_validas, axis=0)
-
-    return styler
-
-
 # ============================================================
-#  Encabezado y mapa
+#  Encabezado
 # ============================================================
 st.title("📊 Análisis de Datos del Sensor (DHT22) - Invernadero IoT")
 st.markdown("""
@@ -157,15 +123,6 @@ st.markdown("""
     recolectados con el **ESP32** y **DHT22**, almacenados en **InfluxDB** (`Fynal`)
     y exportados desde **Grafana**.
 """)
-
-eafit_location = pd.DataFrame({
-    "lat": [6.2006],
-    "lon": [-75.5783],
-    "location": ["Universidad EAFIT"]
-})
-
-st.subheader("📍 Ubicación de referencia - Universidad EAFIT")
-st.map(eafit_location, zoom=15)
 
 # ============================================================
 #  Carga del archivo
@@ -229,9 +186,9 @@ if uploaded_file is not None:
                     st.bar_chart(datos_graf)
 
             if st.checkbox("Mostrar datos crudos"):
-                st.caption("Verde = valor mínimo de la columna · Rojo = valor máximo de la columna")
                 st.dataframe(
-                    estilizar_tabla(df1, variables, resaltar_extremos=True),
+                    df1,
+                    column_config=construir_column_config(df1, variables),
                     use_container_width=True,
                     height=380
                 )
@@ -244,10 +201,7 @@ if uploaded_file is not None:
 
             st.write("#### Resumen de todas las variables")
             resumen_df = df1[variables].describe().T.round(2)
-            st.dataframe(
-                resumen_df.style.background_gradient(cmap="Purples", axis=0).format("{:.2f}"),
-                use_container_width=True
-            )
+            st.dataframe(resumen_df, use_container_width=True)
 
             st.write("#### Detalle por variable")
             var_stats = st.selectbox("Variable", variables, key="var_stats")
@@ -262,10 +216,7 @@ if uploaded_file is not None:
             if len(variables) >= 2:
                 st.write("#### Correlación entre variables")
                 corr_df = df1[variables].corr().round(2)
-                st.dataframe(
-                    corr_df.style.background_gradient(cmap="coolwarm", vmin=-1, vmax=1).format("{:.2f}"),
-                    use_container_width=True
-                )
+                st.dataframe(corr_df, use_container_width=True)
                 st.caption(
                     "Valores cercanos a 1 o −1 indican una relación lineal fuerte; "
                     "cercanos a 0, poca relación."
@@ -339,7 +290,6 @@ if uploaded_file is not None:
                 if col_tiempo is not None and len(df1) > 0:
                     st.write(f"- **Desde:** {df1.index.min():%Y-%m-%d %H:%M}")
                     st.write(f"- **Hasta:** {df1.index.max():%Y-%m-%d %H:%M}")
-                st.write("- **Ubicación de referencia:** Universidad EAFIT, Medellín")
 
     except Exception as e:
         st.error(f"Error al procesar el archivo: {str(e)}")
@@ -353,5 +303,4 @@ else:
 st.markdown("""
     ---
     Proyecto de Invernadero IoT — ESP32, DHT22, ThingsBoard, InfluxDB y Grafana.
-    Ubicación: Universidad EAFIT, Medellín, Colombia
 """)
