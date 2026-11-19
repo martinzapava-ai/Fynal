@@ -14,6 +14,32 @@ st.markdown("""
     <style>
     .main { padding: 2rem; }
     .stAlert { margin-top: 1rem; }
+
+    /* Estilo visual para métricas y tablas */
+    [data-testid="stMetric"] {
+        background: linear-gradient(145deg, #f8fafc 0%, #eef2ff 100%);
+        border: 1px solid #c7d2fe;
+        border-left: 5px solid #4f46e5;
+        border-radius: 12px;
+        padding: 0.9rem 1.1rem;
+        box-shadow: 0 2px 8px rgba(79, 70, 229, 0.08);
+    }
+
+    [data-testid="stMetricLabel"] {
+        color: #334155 !important;
+        font-weight: 600 !important;
+    }
+
+    [data-testid="stMetricValue"] {
+        color: #1e1b4b !important;
+    }
+
+    [data-testid="stDataFrame"] {
+        border: 1px solid #cbd5e1;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -61,6 +87,65 @@ def normalizar(df):
     """Escala cada columna a 0-1 para comparar variables con unidades distintas."""
     rango = (df.max() - df.min()).replace(0, 1)
     return (df - df.min()) / rango
+
+
+def construir_column_config(df_datos, variables):
+    """Configura barras de progreso y formato dinámico para las columnas de la tabla."""
+    config = {}
+    for col in variables:
+        serie = df_datos[col].dropna()
+        if serie.empty:
+            continue
+        col_low = str(col).lower()
+        if "temp" in col_low:
+            fmt = "%.2f °C"
+        elif "hum" in col_low:
+            fmt = "%.2f %%"
+        else:
+            fmt = "%.2f"
+
+        min_val = float(serie.min())
+        max_val = float(serie.max())
+        if min_val < max_val:
+            config[col] = st.column_config.ProgressColumn(
+                col,
+                format=fmt,
+                min_value=min_val,
+                max_value=max_val,
+            )
+        else:
+            config[col] = st.column_config.NumberColumn(col, format=fmt)
+    return config
+
+
+def estilizar_tabla(df_datos, variables, resaltar_extremos=True):
+    """Aplica color de fondo sutil y resalta máximos/mínimos en las columnas numéricas."""
+    cols_validas = [c for c in variables if c in df_datos.columns]
+    if not cols_validas:
+        return df_datos
+
+    styler = df_datos.style.background_gradient(
+        cmap="YlGnBu",
+        subset=cols_validas,
+        axis=0
+    ).format(precision=2, subset=cols_validas)
+
+    if resaltar_extremos and len(df_datos) > 1:
+        def _resaltar(s):
+            estilos = [""] * len(s)
+            if s.notna().sum() > 1:
+                idx_max = s.idxmax()
+                idx_min = s.idxmin()
+                for i, idx in enumerate(s.index):
+                    if idx == idx_max:
+                        estilos[i] = "background-color: #fee2e2; color: #991b1b; font-weight: 700;"
+                    elif idx == idx_min:
+                        estilos[i] = "background-color: #dcfce7; color: #166534; font-weight: 700;"
+            return estilos
+
+        styler = styler.apply(_resaltar, subset=cols_validas, axis=0)
+
+    return styler
 
 
 # ============================================================
@@ -144,7 +229,12 @@ if uploaded_file is not None:
                     st.bar_chart(datos_graf)
 
             if st.checkbox("Mostrar datos crudos"):
-                st.dataframe(df1)
+                st.caption("Verde = valor mínimo de la columna · Rojo = valor máximo de la columna")
+                st.dataframe(
+                    estilizar_tabla(df1, variables, resaltar_extremos=True),
+                    use_container_width=True,
+                    height=380
+                )
 
         # ----------------------------------------------------
         #  TAB 2 · Estadísticas
@@ -153,7 +243,11 @@ if uploaded_file is not None:
             st.subheader("Análisis Estadístico")
 
             st.write("#### Resumen de todas las variables")
-            st.dataframe(df1[variables].describe().T.round(2))
+            resumen_df = df1[variables].describe().T.round(2)
+            st.dataframe(
+                resumen_df.style.background_gradient(cmap="Purples", axis=0).format("{:.2f}"),
+                use_container_width=True
+            )
 
             st.write("#### Detalle por variable")
             var_stats = st.selectbox("Variable", variables, key="var_stats")
@@ -167,7 +261,11 @@ if uploaded_file is not None:
 
             if len(variables) >= 2:
                 st.write("#### Correlación entre variables")
-                st.dataframe(df1[variables].corr().round(2))
+                corr_df = df1[variables].corr().round(2)
+                st.dataframe(
+                    corr_df.style.background_gradient(cmap="coolwarm", vmin=-1, vmax=1).format("{:.2f}"),
+                    use_container_width=True
+                )
                 st.caption(
                     "Valores cercanos a 1 o −1 indican una relación lineal fuerte; "
                     "cercanos a 0, poca relación."
@@ -186,7 +284,11 @@ if uploaded_file is not None:
             if min_value == max_value:
                 st.warning(f"⚠️ Todos los valores de `{var_filtro}` son iguales: {min_value:.2f}")
                 st.info("No es posible aplicar filtros cuando no hay variación en los datos.")
-                st.dataframe(df1)
+                st.dataframe(
+                    df1,
+                    column_config=construir_column_config(df1, variables),
+                    use_container_width=True
+                )
             else:
                 rango = st.slider(
                     f"Rango de {var_filtro}",
@@ -201,7 +303,12 @@ if uploaded_file is not None:
                     f"**{len(filtrado)}** de {len(df1)} registros con `{var_filtro}` "
                     f"entre {rango[0]:.2f} y {rango[1]:.2f}:"
                 )
-                st.dataframe(filtrado)
+                st.dataframe(
+                    filtrado,
+                    column_config=construir_column_config(filtrado, variables),
+                    use_container_width=True,
+                    height=380
+                )
 
                 st.download_button(
                     label="⬇️ Descargar datos filtrados (CSV)",
